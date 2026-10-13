@@ -220,18 +220,56 @@ describe('The admin user directory', () => {
     })
   })
 
-  it('updates employment type inline in the organisation editor', async () => {
+  it('says what an account is: the five employment types, and who is on payroll', async () => {
     const user = renderPage([DANIEL])
     await user.click(screen.getByRole('button', { name: 'Edit Daniel Okafor' }))
     const editor = screen.getByRole('form', { name: /Organisation details/ })
+    const select = within(editor).getByLabelText('Employment type') as HTMLSelectElement
 
-    await user.selectOptions(within(editor).getByLabelText('Employment type'), 'Contractor')
+    // No type yet: nothing chosen, and no "default" to choose.
+    expect(select.value).toBe('')
+    expect(
+      Array.from(select.options)
+        .filter((option) => !option.disabled)
+        .map((option) => option.textContent),
+    ).toEqual(['Employee', 'Contractor', 'Intern', 'External', 'Service account'])
+    expect(select.getAttribute('aria-describedby')).toBeTruthy()
+    expect(
+      document.getElementById(select.getAttribute('aria-describedby') ?? '')?.textContent,
+    ).toBe(
+      'Employee, contractor, intern, external or service account. Only employees are on payroll unless finance adds a type.',
+    )
+
+    await user.selectOptions(select, 'External')
     await user.click(within(editor).getByRole('button', { name: 'Save' }))
-
     expect(mocks.update.mutateAsync).toHaveBeenCalledWith({
       userId: 2,
-      data: expect.objectContaining({ employment_type: 'contractor' }),
+      data: expect.objectContaining({ employment_type: 'external' }),
     })
+  })
+
+  it('shows the type an account has, and sends it only when changed', async () => {
+    const user = renderPage([{ ...DANIEL, employment_type: 'service_account' }])
+    await user.click(screen.getByRole('button', { name: 'Edit Daniel Okafor' }))
+    const editor = screen.getByRole('form', { name: /Organisation details/ })
+    expect((within(editor).getByLabelText('Employment type') as HTMLSelectElement).value).toBe(
+      'service_account',
+    )
+    await user.click(within(editor).getByRole('button', { name: 'Save' }))
+    expect(mocks.update.mutateAsync).toHaveBeenCalledWith({
+      userId: 2,
+      data: { department_id: 1, manager_id: null, started_on: '2023-08-14' },
+    })
+  })
+
+  it('leaves the employment type off the row', () => {
+    renderPage([{ ...DANIEL, employment_type: 'contractor' }])
+    expect(
+      screen.getByText(
+        'Senior Backend Engineer · Engineering · Lagos, Nigeria · started 14 Aug 2023',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText(/Contractor/)).toBeNull()
   })
 
   it('picks from the keyboard, and "No manager" clears it', async () => {

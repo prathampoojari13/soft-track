@@ -83,6 +83,7 @@ NOT_TEAM_WRITES = {
         "/finance/payroll/runs/{run_id}/approve",
     ): "finance admins, not team roles",
     ("POST", "/finance/payroll/runs/{run_id}/paid"): "finance admins, not team roles",
+    ("PUT", "/finance/payroll/types"): "finance admins, not team roles",
     (
         "POST",
         "/finance/expenses/{expense_id}/approve",

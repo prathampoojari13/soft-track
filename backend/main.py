@@ -12,6 +12,7 @@ from app_finance.currencies import router as currencies_router
 from app_finance.expenses import finance as expense_claims_router
 from app_finance.expenses import router as expenses_router
 from app_finance.payroll import router as payroll_router
+from app_finance.payroll import types_router as payroll_types_router
 from app_finance.reimbursements import router as reimbursements_router
 from app_finance.reports import router as finance_reports_router
 from app_identity.admin import router as admin_router
@@ -221,6 +222,7 @@ app.include_router(outbound_router)
 app.include_router(currencies_router)
 app.include_router(compensation_router)
 app.include_router(payroll_router)
+app.include_router(payroll_types_router)
 app.include_router(expenses_router)
 app.include_router(expense_claims_router)
 app.include_router(reimbursements_router)

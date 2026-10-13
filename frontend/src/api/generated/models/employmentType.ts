@@ -7,11 +7,12 @@
  */
 
 /**
- * What kind of account or engagement somebody has with the organisation (#320).
+ * What kind of account or engagement somebody has with the organisation
+ * (#247, #320).
  *
- * Internal employee accounts (or accounts with no type set) are expected on
- * payroll by default. Service accounts, contractors, and interns are
- * excluded from payroll drafts unless pay is recorded for them.
+ * An account with no type, or an employee, is on payroll. The others are on
+ * payroll only when finance switches their type on
+ * (`InstanceSettings.payroll_types`) -- except external, which never is.
  */
 export type EmploymentType = typeof EmploymentType[keyof typeof EmploymentType];
 
@@ -20,5 +21,6 @@ export const EmploymentType = {
   employee: 'employee',
   contractor: 'contractor',
   intern: 'intern',
+  external: 'external',
   service_account: 'service_account',
 } as const;

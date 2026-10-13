@@ -127,11 +127,13 @@ export const adminUsers = {
     searchPeople: 'Search people',
     startDate: 'Start date',
     employmentType: 'Employment type',
-    employmentTypeDefault: 'Default (Employee)',
+    employmentTypeHint:
+      'Employee, contractor, intern, external or service account. Only employees are on payroll unless finance adds a type.',
     employmentTypes: {
       employee: 'Employee',
       contractor: 'Contractor',
       intern: 'Intern',
+      external: 'External',
       service_account: 'Service account',
     },
     theirs: 'Job title and location are {{name}}’s to edit, from their own profile.',

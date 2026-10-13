@@ -243,15 +243,9 @@ person.
   member lists, pending invitations, the mention picker and the user
   directory, so nobody writes in front of a client without knowing. A mention
   or a watch reaches them only on tickets in their epics.
-- **Off the books.** Payroll drafts leave accounts from outside out unless compensation is recorded for them (#320).
-
-### Employment type and access control
-
-A site admin sets an account's **Employment type** (`employee`, `contractor`, `intern`, `service_account`, or unset) in **Administration → Users** (#320).
-
-- **Access control is strictly separate:** `is_external` is the sole source of truth for access control and outside-account boundaries. Setting an employment type (such as `contractor`) never alters security boundaries or changes `is_external`. An outside contractor remains an outside account with external access restrictions.
-- **Payroll eligibility:** Internal employees (and accounts with no employment type set) are expected on payroll by default. Contractors, interns, service accounts, and outside accounts are off payroll unless compensation is explicitly recorded for them.
-- **Independent admin updates:** Updating `employment_type` never touches `is_external`, and updating `is_external` never touches `employment_type`. There is no hidden synchronization between the two fields.
+- **Off the books.** An account from outside is never on payroll: not on a
+  payroll draft and not in the Compensation list, whatever pay is recorded
+  for it (#320).
 
 **Beside its teams** (#317), an account from outside reaches its own account,
 its invitations and its notifications, and nothing that asked only "is
@@ -268,6 +262,21 @@ a name is plain text rather than a link to a profile it cannot open.
 team's work as such an account; each is one it may reach (listed with the
 reason), an admin's, or refused, so a route added later that forgot the check
 fails the suite.
+
+### Employment type
+
+**Employment type** on an account's edit form in **Administration → Users**
+says what the account is: employee, contractor, intern, external or service
+account (#247, #320). An account starts with none, which counts as an
+employee.
+
+- **It decides who is on payroll.** Employees are. The other types are not,
+  unless finance puts the type on payroll (see `finance.md`); external never
+  is.
+- **It is not access.** Typing an account external does not make it an
+  account from outside, and marking an account from outside does not change
+  its type. What an account can reach comes from being from outside, never
+  from its type.
 
 ### Invitations, with or without a mail server
 

@@ -57,6 +57,22 @@ def record(client, actor, username, status=200, **body):
     return response.json()
 
 
+def newcomer(client, auth, sofia, email, full_name, **fields):
+    """An account somebody set up, with `fields` set by the site admin."""
+    from lib_utils.rate_limit import registration_by_address
+
+    registration_by_address._records.clear()
+    someone = auth(email=email, full_name=full_name)
+    if fields:
+        response = client.patch(
+            f"/admin/users/{someone['user']['id']}",
+            json=fields,
+            headers=sofia["headers"],
+        )
+        assert response.status_code == 200, response.text
+    return someone
+
+
 def listing(client, actor, query=""):
     response = client.get(f"/finance/compensation{query}", headers=actor["headers"])
     assert response.status_code == 200, response.text
@@ -470,70 +486,110 @@ def test_currencies_are_listed_with_their_decimal_places(client, people):
     assert client.get("/currencies").status_code == 401
 
 
-def test_compensation_listing_excludes_non_payroll_accounts(client, people, auth):
-    """Issue #320: non-payroll accounts do not appear in the compensation list or increase missing count."""
+def test_the_list_holds_who_is_on_payroll_and_names_who_is_not(client, people, auth):
+    """#320: the Compensation list has the people a run has. Accounts that
+    are not on payroll are not rows and not missing; they are named beside
+    the list, with the type that keeps them off."""
     grace, sofia = people["grace"], people["sofia"]
-
-    # Record pay for daniel
     record(client, grace, "daniel")
-
-    # Create service account, external user, and contractor
-    bot = auth(email="bot@northwind.dev", full_name="Bot Account")
-    client.patch(
-        f"/admin/users/{bot['user']['id']}",
-        json={"employment_type": "service_account"},
-        headers=sofia["headers"],
+    newcomer(
+        client,
+        auth,
+        sofia,
+        "bot@northwind.dev",
+        "Build Bot",
+        employment_type="service_account",
     )
-
-    external_user = auth(email="guest@partner.dev", full_name="Guest Account")
-    client.patch(
-        f"/admin/users/{external_user['user']['id']}",
-        json={"is_external": True},
-        headers=sofia["headers"],
+    newcomer(
+        client, auth, sofia, "carlos@partner.dev", "Carlos Rivera", is_external=True
     )
-
-    contractor = auth(email="contractor@northwind.dev", full_name="Contractor Account")
-    client.patch(
-        f"/admin/users/{contractor['user']['id']}",
-        json={"employment_type": "contractor"},
-        headers=sofia["headers"],
+    newcomer(
+        client,
+        auth,
+        sofia,
+        "chen@northwind.dev",
+        "Chen Contractor",
+        employment_type="contractor",
     )
+    newcomer(
+        client,
+        auth,
+        sofia,
+        "carl@northwind.dev",
+        "Carl Contractor",
+        employment_type="contractor",
+    )
+    record(client, grace, "carl", amount_minor=500000)
 
     page = listing(client, grace)
-    usernames = [item["person"]["username"] for item in page["items"]]
+    assert [item["person"]["username"] for item in page["items"]] == [
+        "carl",
+        "daniel",
+        "amina",
+        "ben",
+        "grace",
+        "sofia",
+    ]
+    assert (page["total"], page["missing"], page["on_payroll"]) == (6, 4, 6)
+    assert page["not_on_payroll"] == [
+        {
+            "id": page["not_on_payroll"][0]["id"],
+            "name": "Build Bot",
+            "reason": "service_account",
+        },
+        {
+            "id": page["not_on_payroll"][1]["id"],
+            "name": "Carlos Rivera",
+            "reason": "external",
+        },
+        {
+            "id": page["not_on_payroll"][2]["id"],
+            "name": "Chen Contractor",
+            "reason": "contractor",
+        },
+    ]
 
-    # Non-payroll accounts without compensation must not appear
-    assert "bot" not in usernames
-    assert "guest" not in usernames
-    assert "contractor" not in usernames
+    # The footer is about everybody, not the rows a search matched.
+    searched = listing(client, grace, "?q=daniel")
+    assert (searched["total"], searched["on_payroll"]) == (1, 6)
+    assert len(searched["not_on_payroll"]) == 3
 
-    # Actual employee accounts without compensation still appear as missing
-    assert "ben" in usernames
-    assert "grace" in usernames
-    assert "amina" in usernames
-    assert "sofia" in usernames
 
-    # Total missing count only reflects employees without compensation (amina, ben, grace, sofia = 4)
-    assert page["missing"] == 4
+def test_an_outside_account_is_not_on_the_list_whatever_it_is_paid(
+    client, people, auth
+):
+    """#243: pay recorded for somebody from outside does not put them on
+    payroll, here or on a run."""
+    grace, sofia = people["grace"], people["sofia"]
+    newcomer(
+        client, auth, sofia, "carlos@partner.dev", "Carlos Rivera", is_external=True
+    )
+    record(client, grace, "carlos")
 
-    # Contractor WITH compensation is included and not marked missing
-    record(
+    page = listing(client, grace)
+    assert "carlos" not in [item["person"]["username"] for item in page["items"]]
+    assert [(p["name"], p["reason"]) for p in page["not_on_payroll"]] == [
+        ("Carlos Rivera", "external")
+    ]
+    assert page["totals"] == []
+
+
+def test_a_type_finance_puts_on_payroll_is_listed_as_missing(client, people, auth):
+    grace, sofia = people["grace"], people["sofia"]
+    newcomer(
         client,
-        grace,
-        contractor["user"]["username"],
-        amount_minor=500000,
-        currency="USD",
+        auth,
+        sofia,
+        "iris@northwind.dev",
+        "Iris Intern",
+        employment_type="intern",
     )
-    page_after = listing(client, grace)
-    contractor_row = next(
-        (
-            item
-            for item in page_after["items"]
-            if item["person"]["username"] == "contractor"
-        ),
-        None,
+    assert listing(client, grace)["missing"] == 5
+
+    response = client.put(
+        "/finance/payroll/types", json={"types": ["intern"]}, headers=grace["headers"]
     )
-    assert contractor_row is not None
-    assert contractor_row["current"]["amount_minor"] == 500000
-    # Missing count is still 4
-    assert page_after["missing"] == 4
+    assert response.status_code == 200, response.text
+    page = listing(client, grace)
+    assert "iris" in [item["person"]["username"] for item in page["items"]]
+    assert (page["missing"], page["not_on_payroll"]) == (6, [])

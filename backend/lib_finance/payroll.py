@@ -3,10 +3,12 @@
 A run is one period on one pay schedule. What it would pay is worked out
 while it is a draft and written down when it is approved:
 
-- **Draft.** Its lines are read live: everybody active whose pay in effect on
-  the period's last day is on this schedule, and everybody active with no pay
-  in effect at all -- listed as missing, never skipped, because a run that
-  quietly pays fewer people than work here is the worst kind of wrong. A pay
+- **Draft.** Its lines are read live: everybody on payroll (#320) whose pay
+  in effect on the period's last day is on this schedule, and everybody on
+  payroll with no pay in effect at all -- listed as missing, never skipped,
+  because a run that quietly pays fewer people than work here is the worst
+  kind of wrong. The active accounts that are not on payroll are named
+  beside the lines. A pay
   recorded, or an account opened, after the run was generated is on it; a
   line takes a one-off adjustment with a note.
 - **Approved.** Every line is written with its amount, currency, record and
@@ -28,13 +30,12 @@ from typing import Iterator, Optional
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
-from sqlmodel import Session, and_, col, func, or_, select
+from sqlmodel import Session, col, func, select
 
-from lib_finance.compensation import in_effect, pay_on
+from lib_finance.compensation import not_on_payroll, on_payroll, pay_on
 from lib_finance.models.money import FinancePerson
 from lib_finance.models.payroll import (
     PayrollAdjustment,
-    PayrollLeftOffItem,
     PayrollLineRead,
     PayrollReimbursementRead,
     PayrollRunCreate,
@@ -48,9 +49,7 @@ from lib_identity.models.departments import DepartmentRef
 from lib_identity.models.identity import PersonRef
 from lib_softtrack.models.page import DEFAULT_LIMIT
 from lib_softtrack.tables import (
-    Compensation,
     Department,
-    EmploymentType,
     Expense,
     PayrollLine,
     PayrollRun,
@@ -96,27 +95,10 @@ def _sorted(lines: list[_Line]) -> list[_Line]:
 
 
 def _draft_lines(session: Session, run: PayrollRun) -> list[_Line]:
-    effective_comp = in_effect(run.period_end)
-    users_with_pay_this_schedule = select(Compensation.user_id).where(
-        col(Compensation.id).in_(effective_comp),
-        Compensation.pay_schedule == run.pay_schedule.value,
-    )
-
+    # Who is on payroll (#320); the loop below keeps those on this schedule.
     people = session.exec(
         select(User)
-        .where(
-            User.is_active == True,  # noqa: E712 -- SQL comparison
-            or_(
-                and_(
-                    User.is_external == False,  # noqa: E712
-                    or_(
-                        User.employment_type == None,  # noqa: E711
-                        User.employment_type == EmploymentType.employee,
-                    ),
-                ),
-                col(User.id).in_(users_with_pay_this_schedule),
-            ),
-        )
+        .where(on_payroll(session, run.period_end))
         .options(selectinload(User.department))
     ).all()
     pay = pay_on(session, [person.id for person in people], run.period_end)
@@ -170,56 +152,6 @@ def _lines(session: Session, run: PayrollRun) -> list[_Line]:
     if run.state is PayrollRunState.draft:
         return _draft_lines(session, run)
     return _frozen_lines(session, run)
-
-
-def _left_off(
-    session: Session, run: PayrollRun
-) -> tuple[int, list[PayrollLeftOffItem]]:
-    """Active accounts excluded from payroll (#320): external accounts,
-    service accounts, contractors, and interns with no pay on this run."""
-    effective_comp = in_effect(run.period_end)
-    users_with_pay_this_schedule = select(Compensation.user_id).where(
-        col(Compensation.id).in_(effective_comp),
-        Compensation.pay_schedule == run.pay_schedule.value,
-    )
-
-    excluded_filters = [
-        User.is_active == True,  # noqa: E712 -- SQL comparison
-        or_(
-            User.is_external == True,  # noqa: E712
-            User.employment_type.in_(
-                [
-                    EmploymentType.service_account,
-                    EmploymentType.contractor,
-                    EmploymentType.intern,
-                ]
-            ),
-        ),
-        col(User.id).not_in(users_with_pay_this_schedule),
-    ]
-
-    count = session.exec(
-        select(func.count()).select_from(User).where(*excluded_filters)
-    ).one()
-
-    rows = session.exec(
-        select(User.id, User.full_name, User.is_external, User.employment_type)
-        .where(*excluded_filters)
-        .order_by(func.lower(User.full_name), User.id)
-        .limit(5)
-    ).all()
-
-    preview = [
-        PayrollLeftOffItem(
-            id=u_id,
-            name=full_name,
-            reason=(
-                "external" if is_ext else (emp_type.value if emp_type else "contractor")
-            ),
-        )
-        for u_id, full_name, is_ext, emp_type in rows
-    ]
-    return count, preview
 
 
 @dataclass
@@ -370,9 +302,6 @@ def _read(session: Session, run: PayrollRun) -> PayrollRunRead:
         total = reimbursed.setdefault(line.currency.value, [0, 0])
         total[0] += line.amount_minor
         total[1] += line.claims
-    left_off_count, left_off_preview = (
-        _left_off(session, run) if run.state is PayrollRunState.draft else (0, [])
-    )
     return PayrollRunRead(
         **_summary(
             run,
@@ -401,8 +330,12 @@ def _read(session: Session, run: PayrollRun) -> PayrollRunRead:
             )
             for line in lines
         ],
-        left_off_count=left_off_count,
-        left_off_preview=left_off_preview,
+        # Named on a draft only: an approved run's lines are what it paid.
+        left_off=(
+            not_on_payroll(session, run.period_end)
+            if run.state is PayrollRunState.draft
+            else []
+        ),
     )
 
 

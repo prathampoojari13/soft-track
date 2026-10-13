@@ -5,7 +5,7 @@
  * An open-source, self-hostable ticket tracker inspired by Linear.
  * OpenAPI spec version: 0.1.0
  */
-import type { PayrollLeftOffItem } from './payrollLeftOffItem';
+import type { NotOnPayroll } from './notOnPayroll';
 import type { PayrollLineRead } from './payrollLineRead';
 import type { PayrollReimbursementRead } from './payrollReimbursementRead';
 import type { PayrollRunState } from './payrollRunState';
@@ -31,6 +31,5 @@ export interface PayrollRunRead {
   reimbursement_totals: PayrollTotal[];
   lines: PayrollLineRead[];
   reimbursements: PayrollReimbursementRead[];
-  left_off_count?: number;
-  left_off_preview?: PayrollLeftOffItem[];
+  left_off: NotOnPayroll[];
 }

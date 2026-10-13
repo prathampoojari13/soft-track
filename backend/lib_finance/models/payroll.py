@@ -3,11 +3,13 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from lib_finance.models.compensation import NotOnPayroll
 from lib_finance.models.money import FinancePerson
+from lib_finance.payroll_types import SWITCHABLE
 from lib_finance.money import MAX_AMOUNT_MINOR, Currency
 from lib_identity.models.departments import DepartmentRef
 from lib_identity.models.identity import PersonRef
-from lib_softtrack.tables import PayrollRunState, PaySchedule
+from lib_softtrack.tables import EmploymentType, PayrollRunState, PaySchedule
 
 #: Room for "On-call, four weekends in September".
 ADJUSTMENT_NOTE_MAX = 200
@@ -104,22 +106,31 @@ class PayrollRunSummary(BaseModel):
     reimbursement_totals: list[PayrollTotal]
 
 
-class PayrollLeftOffItem(BaseModel):
-    """An active account deliberately excluded from payroll (#320)."""
-
-    id: int
-    name: str
-    reason: str
-
-
 class PayrollRunRead(PayrollRunSummary):
     #: Paid lines by name, then the missing ones, by name.
     lines: list[PayrollLineRead]
     #: Claims paid back on the run (#137), by name.
     reimbursements: list[PayrollReimbursementRead]
-    #: Active accounts left off a draft run (#320).
-    left_off_count: int = 0
-    left_off_preview: list[PayrollLeftOffItem] = []
+    #: The active accounts a draft leaves off because they are not on
+    #: payroll (#320), by name. Empty once the run is approved.
+    left_off: list[NotOnPayroll]
+
+
+class PayrollTypes(BaseModel):
+    """The employment types on payroll besides employees (#320). Only
+    contractor, intern and service_account can be: an employee always is,
+    and an account from outside never is."""
+
+    types: list[EmploymentType]
+
+    @field_validator("types")
+    @classmethod
+    def _switchable(cls, value: list[EmploymentType]) -> list[EmploymentType]:
+        if any(kind not in SWITCHABLE for kind in value):
+            raise ValueError(
+                "Only contractor, intern and service_account can be put on payroll"
+            )
+        return value
 
 
 class PayrollRunPage(BaseModel):

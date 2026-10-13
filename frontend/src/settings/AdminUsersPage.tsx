@@ -328,8 +328,6 @@ export default function AdminUsersPage() {
                   ),
                 row.report_count > 0 && t('adminUsers.directReports', { count: row.report_count }),
                 row.location,
-                row.employment_type &&
-                  t(`adminUsers.editor.employmentTypes.${row.employment_type}`),
                 row.started_on &&
                   t(isAhead(row.started_on) ? 'adminUsers.startsOn' : 'adminUsers.startedOn', {
                     date: formatStartedOn(row.started_on),
@@ -739,6 +737,15 @@ function GrantFinanceDialog({
   )
 }
 
+/** #247's employment types, in the order the editor offers them. */
+const EMPLOYMENT_TYPES = [
+  EmploymentType.employee,
+  EmploymentType.contractor,
+  EmploymentType.intern,
+  EmploymentType.external,
+  EmploymentType.service_account,
+] as const
+
 /**
  * The facts the organisation owns about someone (#122-#124), set inline on
  * their row. Title and location are not here: those are the person's to say,
@@ -767,6 +774,7 @@ function OrganisationEditor({
     target.employment_type ?? '',
   )
   const [error, setError] = useState<string | null>(null)
+  const employmentHintId = useId()
 
   const managerQuery = useDebounced(managerSearch, 200)
   const candidates = useListUsersAdminUsersGet({ q: managerQuery || undefined, limit: 8 })
@@ -783,8 +791,9 @@ function OrganisationEditor({
       department_id: departmentId ? Number(departmentId) : null,
       manager_id: manager?.id ?? null,
       started_on: startedOn || null,
-      ...(employmentType !== (target.employment_type ?? '')
-        ? { employment_type: (employmentType as EmploymentType) || null }
+      // Sent only when changed: an account with no type keeps none.
+      ...(employmentType && employmentType !== target.employment_type
+        ? { employment_type: employmentType }
         : {}),
     }
     try {
@@ -802,7 +811,7 @@ function OrganisationEditor({
       aria-label={t('adminUsers.editor.label', { name: target.full_name })}
       className="well basis-full rounded-control p-3 sm:ml-[2.875rem]"
     >
-      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-3">
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-neutral-500">
             {t('adminUsers.editor.department')}
@@ -846,31 +855,31 @@ function OrganisationEditor({
             className="field field-sm"
           />
         </label>
-        <label className="block">
-          <span className="mb-1 block text-xs font-medium text-neutral-500">
-            {t('adminUsers.editor.employmentType')}
-          </span>
-          <Select
-            dense
-            block
-            value={employmentType}
-            onChange={(e) => setEmploymentType(e.target.value as EmploymentType | '')}
-          >
-            <option value="">{t('adminUsers.editor.employmentTypeDefault')}</option>
-            <option value={EmploymentType.employee}>
-              {t('adminUsers.editor.employmentTypes.employee')}
-            </option>
-            <option value={EmploymentType.contractor}>
-              {t('adminUsers.editor.employmentTypes.contractor')}
-            </option>
-            <option value={EmploymentType.intern}>
-              {t('adminUsers.editor.employmentTypes.intern')}
-            </option>
-            <option value={EmploymentType.service_account}>
-              {t('adminUsers.editor.employmentTypes.service_account')}
-            </option>
-          </Select>
-        </label>
+        <div className="sm:col-span-3">
+          <label className="block sm:max-w-[calc((100%-1.5rem)/3)]">
+            <span className="mb-1 block text-xs font-medium text-neutral-500">
+              {t('adminUsers.editor.employmentType')}
+            </span>
+            <Select
+              dense
+              block
+              value={employmentType}
+              aria-describedby={employmentHintId}
+              onChange={(e) => setEmploymentType(e.target.value as EmploymentType)}
+            >
+              {/* No type yet: nothing chosen, and nothing to choose back. */}
+              <option value="" disabled hidden />
+              {EMPLOYMENT_TYPES.map((kind) => (
+                <option key={kind} value={kind}>
+                  {t(`adminUsers.editor.employmentTypes.${kind}`)}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <p id={employmentHintId} className="mt-1 text-xs text-neutral-400">
+            {t('adminUsers.editor.employmentTypeHint')}
+          </p>
+        </div>
       </div>
       {error && (
         <p

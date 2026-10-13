@@ -424,10 +424,22 @@ def test_employment_type_and_external_are_strictly_decoupled(client, auth):
     assert res.json()["is_external"] is True
     assert res.json()["employment_type"] == "contractor"
 
-    # "external" employment_type is rejected by schema (422)
+    # Typed external (#247) is a type, not the access flag: setting it on an
+    # account inside the organisation leaves it inside.
+    insider = auth(email="insider@softtrack.dev")
+    res = client.patch(
+        f"/admin/users/{insider['user']['id']}",
+        json={"employment_type": "external"},
+        headers=admin["headers"],
+    )
+    assert res.status_code == 200
+    assert (res.json()["employment_type"], res.json()["is_external"]) == (
+        "external",
+        False,
+    )
     bad_res = client.patch(
         f"/admin/users/{guest['user']['id']}",
-        json={"employment_type": "external"},
+        json={"employment_type": "freelancer"},
         headers=admin["headers"],
     )
     assert bad_res.status_code == 422

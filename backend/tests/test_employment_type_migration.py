@@ -3,7 +3,8 @@
 Issue #320:
 - demo@softtrack.dev is migrated to service_account
 - other existing users remain NULL
-- downgrade removes the column and preserves existing data
+- instancesettings gains payroll_types, empty
+- downgrade removes both columns and preserves existing data
 """
 
 import sqlite3
@@ -46,6 +47,11 @@ def test_employment_type_migration_and_downgrade(tmp_path):
         "INSERT INTO user (id, email, username, hashed_password, full_name, avatar_color, is_active, is_site_admin, is_finance_admin, token_version, email_notifications, is_external, created_at) "
         "VALUES (3, 'contractor@outside.dev', 'contractor', 'passhash', 'Outside Contractor', '#fff', 1, 0, 0, 0, 1, 1, '2026-01-01 00:00:00')"
     )
+    # the instance's settings row (#306)
+    conn.execute(
+        "INSERT INTO instancesettings (id, team_creation, updated_at) "
+        "VALUES (1, 'anyone', '2026-01-01 00:00:00')"
+    )
     conn.commit()
     conn.close()
 
@@ -58,8 +64,11 @@ def test_employment_type_migration_and_downgrade(tmp_path):
         "SELECT id, email, full_name, is_external, employment_type FROM user ORDER BY id"
     )
     rows = cursor.fetchall()
+    cursor.execute("SELECT payroll_types FROM instancesettings")
+    payroll_types = cursor.fetchall()
     conn.close()
 
+    assert payroll_types == [("[]",)]
     assert len(rows) == 3
 
     # demo user becomes service_account
@@ -80,6 +89,8 @@ def test_employment_type_migration_and_downgrade(tmp_path):
     cursor.execute("PRAGMA table_info(user)")
     columns = [row[1] for row in cursor.fetchall()]
     assert "employment_type" not in columns
+    cursor.execute("PRAGMA table_info(instancesettings)")
+    assert "payroll_types" not in [row[1] for row in cursor.fetchall()]
 
     # Existing user data remains intact
     cursor.execute("SELECT id, email, full_name, is_external FROM user ORDER BY id")

@@ -12084,7 +12084,7 @@
           "compensation"
         ],
         "summary": "List Compensation",
-        "description": "Everybody active and what they are paid today, with totals per currency\nand pay schedule over everybody the filters match. People with nothing in\neffect come last, and are counted in `missing`.",
+        "description": "Everybody on payroll (#320) and what they are paid today, with totals\nper currency and pay schedule over everybody the filters match. People\nwith nothing in effect come last, and are counted in `missing`; the\naccounts that are not on payroll are counted and named beside them.",
         "operationId": "list_compensation_finance_compensation_get",
         "security": [
           {
@@ -12748,6 +12748,78 @@
             }
           }
         }
+      }
+    },
+    "/finance/payroll/types": {
+      "get": {
+        "tags": [
+          "payroll"
+        ],
+        "summary": "Get Payroll Types",
+        "description": "The employment types on payroll besides employees (#320).",
+        "operationId": "get_payroll_types_finance_payroll_types_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollTypes"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "payroll"
+        ],
+        "summary": "Set Payroll Types",
+        "description": "Put contractors, interns or service accounts on payroll, or take them\noff. Drafts follow at once; approved runs do not change.",
+        "operationId": "set_payroll_types_finance_payroll_types_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayrollTypes"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayrollTypes"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
       }
     },
     "/expenses": {
@@ -16755,6 +16827,17 @@
           "missing": {
             "type": "integer",
             "title": "Missing"
+          },
+          "on_payroll": {
+            "type": "integer",
+            "title": "On Payroll"
+          },
+          "not_on_payroll": {
+            "items": {
+              "$ref": "#/components/schemas/NotOnPayroll"
+            },
+            "type": "array",
+            "title": "Not On Payroll"
           }
         },
         "type": "object",
@@ -16764,7 +16847,9 @@
           "limit",
           "offset",
           "totals",
-          "missing"
+          "missing",
+          "on_payroll",
+          "not_on_payroll"
         ],
         "title": "CompensationPage"
       },
@@ -17641,10 +17726,11 @@
           "employee",
           "contractor",
           "intern",
+          "external",
           "service_account"
         ],
         "title": "EmploymentType",
-        "description": "What kind of account or engagement somebody has with the organisation (#320).\n\nInternal employee accounts (or accounts with no type set) are expected on\npayroll by default. Service accounts, contractors, and interns are\nexcluded from payroll drafts unless pay is recorded for them."
+        "description": "What kind of account or engagement somebody has with the organisation\n(#247, #320).\n\nAn account with no type, or an employee, is on payroll. The others are on\npayroll only when finance switches their type on\n(`InstanceSettings.payroll_types`) -- except external, which never is."
       },
       "EpicRef": {
         "properties": {
@@ -19132,6 +19218,29 @@
         ],
         "title": "NamedRef"
       },
+      "NotOnPayroll": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/EmploymentType"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "reason"
+        ],
+        "title": "NotOnPayroll",
+        "description": "An active account that is not on payroll (#320), and why: its\nemployment type, or `external` for an account from outside."
+      },
       "NotificationChannel": {
         "type": "string",
         "enum": [
@@ -20240,30 +20349,6 @@
         "title": "PayrollAdjustment",
         "description": "A one-off amount on one line, in the line's currency, and why."
       },
-      "PayrollLeftOffItem": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "reason": {
-            "type": "string",
-            "title": "Reason"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "reason"
-        ],
-        "title": "PayrollLeftOffItem",
-        "description": "An active account deliberately excluded from payroll (#320)."
-      },
       "PayrollLineRead": {
         "properties": {
           "person": {
@@ -20610,18 +20695,12 @@
             "type": "array",
             "title": "Reimbursements"
           },
-          "left_off_count": {
-            "type": "integer",
-            "title": "Left Off Count",
-            "default": 0
-          },
-          "left_off_preview": {
+          "left_off": {
             "items": {
-              "$ref": "#/components/schemas/PayrollLeftOffItem"
+              "$ref": "#/components/schemas/NotOnPayroll"
             },
             "type": "array",
-            "title": "Left Off Preview",
-            "default": []
+            "title": "Left Off"
           }
         },
         "type": "object",
@@ -20638,7 +20717,8 @@
           "missing_count",
           "reimbursement_totals",
           "lines",
-          "reimbursements"
+          "reimbursements",
+          "left_off"
         ],
         "title": "PayrollRunRead"
       },
@@ -20787,6 +20867,23 @@
         ],
         "title": "PayrollTotal",
         "description": "The lines paid in one currency, summed. Never across currencies."
+      },
+      "PayrollTypes": {
+        "properties": {
+          "types": {
+            "items": {
+              "$ref": "#/components/schemas/EmploymentType"
+            },
+            "type": "array",
+            "title": "Types"
+          }
+        },
+        "type": "object",
+        "required": [
+          "types"
+        ],
+        "title": "PayrollTypes",
+        "description": "The employment types on payroll besides employees (#320). Only\ncontractor, intern and service_account can be: an employee always is,\nand an account from outside never is."
       },
       "PeoplePage": {
         "properties": {

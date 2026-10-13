@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 
-from tests.test_compensation import people, record  # noqa: F401 -- fixture
+from tests.test_compensation import newcomer, people, record  # noqa: F401 -- fixture
 
 SEPTEMBER = {"period_start": "2026-09-01", "period_end": "2026-09-30"}
 
@@ -455,228 +455,267 @@ def test_a_department_paid_under_is_renamed_not_deleted(client, paid):
     )
 
 
-def test_payroll_eligibility_and_left_off_summary(client, paid, auth):
-    """Issue #320: payroll invariant and left-off preview behavior.
+def left_off(run):
+    return [(item["name"], item["reason"]) for item in run["left_off"]]
 
-    - Active employee/NULL with comp => paid line
-    - Active employee/NULL without comp => missing line
-    - Active contractor/intern/service_account with comp => paid line
-    - Active contractor/intern/service_account without comp => left_off
-    - Active external with comp => paid line
-    - Active external without comp => left_off
-    - Inactive users are excluded completely
-    """
-    from lib_utils.rate_limit import registration_by_address
 
-    grace = paid["grace"]
-    sofia = paid["sofia"]
-
-    def create_user(email, full_name):
-        registration_by_address._records.clear()
-        return auth(email=email, full_name=full_name)
-
-    # 1. Contractor with compensation => paid
-    c_paid = create_user("c_paid@test.dev", "Carl Contractor Paid")
-    client.patch(
-        f"/admin/users/{c_paid['user']['id']}",
-        json={"employment_type": "contractor"},
-        headers=sofia["headers"],
-    )
-    record(
+def test_who_is_on_a_draft_comes_from_the_employment_type(client, paid, auth):
+    """#320: an employee, or an account with no type, is on payroll; a
+    contractor, an intern or a service account is not, and is named as left
+    off rather than listed as missing -- unless pay is recorded for them."""
+    grace, sofia = paid["grace"], paid["sofia"]
+    newcomer(
         client,
-        grace,
-        c_paid["user"]["username"],
-        amount_minor=500000,
-        currency="USD",
-        effective_on=date(2024, 1, 1),
+        auth,
+        sofia,
+        "carl@northwind.dev",
+        "Carl Paid",
+        employment_type="contractor",
     )
-
-    # 2. Contractor without compensation => left_off
-    c_unpaid = create_user("c_unpaid@test.dev", "Charlie Contractor Unpaid")
-    client.patch(
-        f"/admin/users/{c_unpaid['user']['id']}",
-        json={"employment_type": "contractor"},
-        headers=sofia["headers"],
-    )
-
-    # 3. Intern with compensation => paid
-    i_paid = create_user("i_paid@test.dev", "Ian Intern Paid")
-    client.patch(
-        f"/admin/users/{i_paid['user']['id']}",
-        json={"employment_type": "intern"},
-        headers=sofia["headers"],
-    )
-    record(
+    record(client, grace, "carl", amount_minor=500000, effective_on=date(2024, 1, 1))
+    newcomer(
         client,
-        grace,
-        i_paid["user"]["username"],
-        amount_minor=200000,
-        currency="USD",
-        effective_on=date(2024, 1, 1),
+        auth,
+        sofia,
+        "chen@northwind.dev",
+        "Chen Unpaid",
+        employment_type="contractor",
     )
-
-    # 4. Intern without compensation => left_off
-    i_unpaid = create_user("i_unpaid@test.dev", "Iris Intern Unpaid")
-    client.patch(
-        f"/admin/users/{i_unpaid['user']['id']}",
-        json={"employment_type": "intern"},
-        headers=sofia["headers"],
-    )
-
-    # 5. Service account without compensation => left_off
-    sa_unpaid = create_user("sa@test.dev", "Sam Service Account")
-    client.patch(
-        f"/admin/users/{sa_unpaid['user']['id']}",
-        json={"employment_type": "service_account"},
-        headers=sofia["headers"],
-    )
-
-    # 6. External with compensation => paid (and stays external!)
-    ext_paid = create_user("ext_paid@outside.dev", "Edward External Paid")
-    client.patch(
-        f"/admin/users/{ext_paid['user']['id']}",
-        json={"is_external": True},
-        headers=sofia["headers"],
-    )
-    record(
+    newcomer(
         client,
-        grace,
-        ext_paid["user"]["username"],
-        amount_minor=400000,
-        currency="USD",
-        effective_on=date(2024, 1, 1),
+        auth,
+        sofia,
+        "iris@northwind.dev",
+        "Iris Unpaid",
+        employment_type="intern",
     )
-
-    # 7. External without compensation => left_off
-    ext_unpaid = create_user("ext_unpaid@outside.dev", "Eve External Unpaid")
-    client.patch(
-        f"/admin/users/{ext_unpaid['user']['id']}",
-        json={"is_external": True},
-        headers=sofia["headers"],
+    newcomer(
+        client,
+        auth,
+        sofia,
+        "bot@northwind.dev",
+        "Build Bot",
+        employment_type="service_account",
     )
-
-    # 8. Inactive user => excluded completely
-    inactive = create_user("inactive@test.dev", "Inactive Person")
-    client.patch(
-        f"/admin/users/{inactive['user']['id']}",
-        json={"is_active": False, "employment_type": "contractor"},
-        headers=sofia["headers"],
+    newcomer(
+        client,
+        auth,
+        sofia,
+        "eve@northwind.dev",
+        "Eve Employee",
+        employment_type="employee",
+    )
+    newcomer(
+        client,
+        auth,
+        sofia,
+        "gone@northwind.dev",
+        "Gone Away",
+        employment_type="contractor",
+        is_active=False,
     )
 
     run = create(client, grace)
 
-    line_usernames = {l["person"]["username"] for l in run["lines"]}
-    # Active internal employee/NULL with comp => paid
-    assert "amina" in line_usernames
-    assert "daniel" in line_usernames
-    # Active internal employee/NULL without comp => missing
-    assert "ben" in line_usernames
-    assert "grace" in line_usernames
-    ben_line = next(l for l in run["lines"] if l["person"]["username"] == "ben")
-    assert ben_line["missing"] is True
-
-    # Contractor with comp => paid
-    assert c_paid["user"]["username"] in line_usernames
-    # Intern with comp => paid
-    assert i_paid["user"]["username"] in line_usernames
-    # External with comp => paid
-    assert ext_paid["user"]["username"] in line_usernames
-
-    # Check external account remains external
-    ext_user = client.get("/auth/me", headers=ext_paid["headers"]).json()
-    assert ext_user["is_external"] is True
-
-    # Excluded accounts are NOT on lines
-    assert c_unpaid["user"]["username"] not in line_usernames
-    assert i_unpaid["user"]["username"] not in line_usernames
-    assert sa_unpaid["user"]["username"] not in line_usernames
-    assert ext_unpaid["user"]["username"] not in line_usernames
-    assert inactive["user"]["username"] not in line_usernames
-
-    # Missing count reflects only employees/NULL without comp
-    assert run["missing_count"] == 2
-
-    # Left-off count and preview
-    # c_unpaid, i_unpaid, sa_unpaid, ext_unpaid (and any default demo accounts if present)
-    assert run["left_off_count"] >= 4
-    preview = run["left_off_preview"]
-    assert len(preview) <= 5
-
-    # Check scalar structure of preview items: id, name, reason
-    for item in preview:
-        assert "id" in item
-        assert "name" in item
-        assert "reason" in item
-        assert item["reason"] in ("external", "contractor", "intern", "service_account")
-        # Ensure no full user or department serialization
-        assert "department" not in item
-        assert "email" not in item
-
-    # Check reasons
-    preview_reasons = {p["name"]: p["reason"] for p in preview}
-    if "Charlie Contractor Unpaid" in preview_reasons:
-        assert preview_reasons["Charlie Contractor Unpaid"] == "contractor"
-    if "Iris Intern Unpaid" in preview_reasons:
-        assert preview_reasons["Iris Intern Unpaid"] == "intern"
-    if "Sam Service Account" in preview_reasons:
-        assert preview_reasons["Sam Service Account"] == "service_account"
-    if "Eve External Unpaid" in preview_reasons:
-        assert preview_reasons["Eve External Unpaid"] == "external"
-
-    # Preview ordering is deterministic by lower(name), id
-    names = [p["name"].lower() for p in preview]
-    assert names == sorted(names)
+    assert lines(run) == [
+        ("amina", 645000, "GBP"),
+        ("carl", 500000, "USD"),
+        ("daniel", 795000, "USD"),
+        ("ben", None, None),
+        ("eve", None, None),
+        ("grace", None, None),
+    ]
+    assert run["missing_count"] == 3
+    assert left_off(run) == [
+        ("Build Bot", "service_account"),
+        ("Chen Unpaid", "contractor"),
+        ("Iris Unpaid", "intern"),
+    ]
 
 
-def test_left_off_preview_caps_at_five(client, paid, auth):
-    """When more than 5 accounts are left off, preview is capped at 5 and count is accurate."""
-    from lib_utils.rate_limit import registration_by_address
+def test_an_outside_account_is_never_on_a_run_whatever_it_is_paid(client, paid, auth):
+    """#243, kept by #320: from outside -- the access flag or the type -- is
+    left off, even with pay in effect on this run's schedule."""
+    grace, sofia = paid["grace"], paid["sofia"]
+    newcomer(
+        client, auth, sofia, "carlos@partner.dev", "Carlos Rivera", is_external=True
+    )
+    record(client, grace, "carlos", effective_on=date(2024, 1, 1))
+    newcomer(
+        client,
+        auth,
+        sofia,
+        "olga@northwind.dev",
+        "Olga Outside",
+        employment_type="external",
+    )
+    record(client, grace, "olga", effective_on=date(2024, 1, 1))
 
-    grace = paid["grace"]
-    sofia = paid["sofia"]
+    run = create(client, grace)
 
-    # Create 8 contractor accounts without compensation
-    for i in range(8):
-        registration_by_address._records.clear()
-        c = auth(email=f"extra_contractor_{i}@test.dev", full_name=f"Z-Contractor {i}")
-        client.patch(
-            f"/admin/users/{c['user']['id']}",
-            json={"employment_type": "contractor"},
-            headers=sofia["headers"],
+    names = {line["person"]["username"] for line in run["lines"]}
+    assert "carlos" not in names and "olga" not in names
+    assert left_off(run) == [
+        ("Carlos Rivera", "external"),
+        ("Olga Outside", "external"),
+    ]
+
+
+def test_somebody_paid_on_another_schedule_is_simply_not_on_this_run(
+    client, paid, auth
+):
+    """#320: left off means not on payroll at all. A contractor paid
+    bi-weekly is on the bi-weekly run, and not named on the monthly one."""
+    grace, sofia = paid["grace"], paid["sofia"]
+    newcomer(
+        client,
+        auth,
+        sofia,
+        "carl@northwind.dev",
+        "Carl Contractor",
+        employment_type="contractor",
+    )
+    record(
+        client, grace, "carl", pay_schedule="bi_weekly", effective_on=date(2024, 1, 1)
+    )
+
+    monthly = create(client, grace)
+    assert "carl" not in {line["person"]["username"] for line in monthly["lines"]}
+    assert left_off(monthly) == []
+
+    bi_weekly = create(
+        client,
+        grace,
+        pay_schedule="bi_weekly",
+        period_start="2026-09-15",
+        period_end="2026-09-28",
+    )
+    assert lines(bi_weekly) == [
+        ("carl", 725000, "USD"),
+        ("ben", None, None),
+        ("grace", None, None),
+    ]
+
+
+def test_every_account_left_off_is_named(client, paid, auth):
+    grace, sofia = paid["grace"], paid["sofia"]
+    for i in range(7):
+        newcomer(
+            client,
+            auth,
+            sofia,
+            f"intern{i}@northwind.dev",
+            f"Intern {i}",
+            employment_type="intern",
         )
 
     run = create(client, grace)
-    assert run["left_off_count"] >= 8
-    assert len(run["left_off_preview"]) == 5
+    assert left_off(run) == [(f"Intern {i}", "intern") for i in range(7)]
 
 
-def test_approved_and_paid_runs_remain_frozen(client, paid):
-    """Approved and paid payroll runs remain frozen and unchanged (#320)."""
+def types(client, actor, status=200, put=None):
+    if put is None:
+        response = client.get("/finance/payroll/types", headers=actor["headers"])
+    else:
+        response = client.put(
+            "/finance/payroll/types", json={"types": put}, headers=actor["headers"]
+        )
+    assert response.status_code == status, response.text
+    return response.json()
+
+
+def test_finance_puts_a_type_on_payroll_and_it_is_an_employee_there(client, paid, auth):
+    """#247: payroll takes employees, plus whichever other types finance
+    switches on. Switched on, a contractor with no pay is missing, not left
+    off."""
     grace, sofia = paid["grace"], paid["sofia"]
+    newcomer(
+        client,
+        auth,
+        sofia,
+        "chen@northwind.dev",
+        "Chen Contractor",
+        employment_type="contractor",
+    )
+    newcomer(
+        client,
+        auth,
+        sofia,
+        "iris@northwind.dev",
+        "Iris Intern",
+        employment_type="intern",
+    )
+    assert types(client, grace) == {"types": []}
+
+    assert types(client, grace, put=["intern", "contractor", "contractor"]) == {
+        "types": ["contractor", "intern"]
+    }
+    assert types(client, grace) == {"types": ["contractor", "intern"]}
+    run = create(client, grace)
+    assert [line["person"]["username"] for line in run["lines"] if line["missing"]] == [
+        "ben",
+        "chen",
+        "grace",
+        "iris",
+    ]
+    assert left_off(run) == []
+
+    assert types(client, grace, put=["intern"]) == {"types": ["intern"]}
+    run = get(client, grace, run["id"])
+    assert "chen" not in {line["person"]["username"] for line in run["lines"]}
+    assert left_off(run) == [("Chen Contractor", "contractor")]
+
+
+def test_only_finance_switches_types_and_never_external_or_employee(client, paid):
+    grace, sofia = paid["grace"], paid["sofia"]
+    for kind in ("external", "employee"):
+        types(client, grace, status=422, put=[kind])
+    assert types(client, grace) == {"types": []}
+    for someone in (sofia, paid["amina"]):
+        assert (
+            client.get("/finance/payroll/types", headers=someone["headers"]).status_code
+            == 403
+        )
+        assert (
+            client.put(
+                "/finance/payroll/types",
+                json={"types": ["intern"]},
+                headers=someone["headers"],
+            ).status_code
+            == 403
+        )
+
+
+def test_approved_and_paid_runs_remain_frozen(client, paid, auth):
+    """Approved and paid payroll runs are untouched (#320): their lines are
+    what they paid, and nobody is named as left off."""
+    grace, sofia = paid["grace"], paid["sofia"]
+    newcomer(
+        client,
+        auth,
+        sofia,
+        "bot@northwind.dev",
+        "Build Bot",
+        employment_type="service_account",
+    )
     draft = create(client, grace)
+    assert left_off(draft) == [("Build Bot", "service_account")]
     approved = act(client, grace, draft, "approve")
 
-    # Deactivating or changing employment type of Daniel AFTER approval does not affect frozen lines
     client.patch(
         f"/admin/users/{paid['daniel']['user']['id']}",
         json={"employment_type": "contractor"},
         headers=sofia["headers"],
     )
-
-    fetched_approved = get(client, grace, approved["id"])
-    assert any(
-        line["person"]["username"] == "daniel" and line["total_minor"] == 795000
-        for line in fetched_approved["lines"]
+    client.patch(
+        f"/admin/users/{paid['ben']['user']['id']}",
+        json={"employment_type": "intern"},
+        headers=sofia["headers"],
     )
-    # Approved runs do not calculate left_off
-    assert fetched_approved["left_off_count"] == 0
-    assert fetched_approved["left_off_preview"] == []
 
-    paid_run = act(client, grace, approved, "paid")
-    fetched_paid = get(client, grace, paid_run["id"])
-    assert any(
-        line["person"]["username"] == "daniel" and line["total_minor"] == 795000
-        for line in fetched_paid["lines"]
-    )
-    assert fetched_paid["left_off_count"] == 0
-    assert fetched_paid["left_off_preview"] == []
+    for run in (
+        get(client, grace, approved["id"]),
+        act(client, grace, approved, "paid"),
+    ):
+        assert lines(run) == lines(draft)
+        assert run["left_off"] == []
