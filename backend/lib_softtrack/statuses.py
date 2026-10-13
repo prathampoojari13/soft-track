@@ -202,6 +202,9 @@ def update_status(
         status.category = payload.category
     if payload.color is not None:
         status.color = payload.color
+    # Set, changed, or -- with an explicit null -- removed (#270).
+    if "wip_limit" in payload.model_fields_set:
+        status.wip_limit = payload.wip_limit
 
     session.add(status)
     session.commit()
@@ -289,11 +292,16 @@ def delete_status(
     # Saved views filtering on it lose the filter rather than the view: a view
     # pointing at a status that no longer exists would match nothing, which
     # reads as broken filtering rather than as a widened filter.
+    # With several statuses in a view (#260), only this one leaves the list;
+    # a list left empty is no filter, so its exclude switch goes with it.
     for view in session.exec(
-        select(SavedView).where(SavedView.status_id == status.id)
+        select(SavedView).where(SavedView.team_id == status.team_id)
     ).all():
-        view.status_id = None
-        session.add(view)
+        if status.id in view.status_ids:
+            view.status_ids = [kept for kept in view.status_ids if kept != status.id]
+            if not view.status_ids:
+                view.status_exclude = False
+            session.add(view)
 
     # Automation rules follow the tickets instead of losing the reference. A
     # rule's condition read as "no opinion" when cleared, which would widen it

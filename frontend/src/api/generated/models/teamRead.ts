@@ -5,6 +5,7 @@
  * An open-source, self-hostable ticket tracker inspired by Linear.
  * OpenAPI spec version: 0.1.0
  */
+import type { EstimateUnit } from './estimateUnit';
 
 export interface TeamRead {
   id: number;
@@ -13,5 +14,12 @@ export interface TeamRead {
   description?: string | null;
   any_member_may_delete?: boolean;
   guests_may_comment?: boolean;
+  wip_limits_hard?: boolean;
+  wip_counts_subtickets?: boolean;
+  estimate_unit?: EstimateUnit;
+  capacity_points?: number;
+  capacity_minutes_per_day?: number;
+  listed?: boolean;
+  open_to_join?: boolean;
   created_at: string;
 }

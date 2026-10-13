@@ -11,7 +11,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-BEFORE = "275db0819719"
+BEFORE = "c4d7e2a9b513"
 AFTER = "a9ae2c8b879d"
 
 
